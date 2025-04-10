@@ -3,8 +3,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'firebase_options.dart';
 
-Future<void> _messageHandler(RemoteMessage message) async {
-  print('background message ${message.notification!.body}');
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  print("Handling a background message: ${message.notification?.body ?? 'No body'}");
 }
 
 void main() async {
@@ -12,11 +12,13 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  FirebaseMessaging.onBackgroundMessage(_messageHandler);
-  runApp(MessagingTutorial());
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  runApp(const MessagingTutorial());
 }
 
 class MessagingTutorial extends StatelessWidget {
+  const MessagingTutorial({Key? key}) : super(key: key);
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -25,57 +27,78 @@ class MessagingTutorial extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: MyHomePage(title: 'Firebase Messaging'),
+      home: const MyHomePage(title: 'Firebase Messaging'),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  MyHomePage({Key? key, this.title}) : super(key: key);
   final String? title;
+
+  const MyHomePage({Key? key, this.title}) : super(key: key);
 
   @override
   _MyHomePageState createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  late FirebaseMessaging messaging;
-  String? notificationText;
+  late final FirebaseMessaging messaging;
+  String? _fcmToken;
+  String? _latestNotification;
 
   @override
   void initState() {
     super.initState();
     messaging = FirebaseMessaging.instance;
-    messaging.subscribeToTopic("messaging");
-    messaging.getToken().then((value) {
-      print(value);
-    });
+    _initializeMessaging();
+  }
 
-    FirebaseMessaging.onMessage.listen((RemoteMessage event) {
-      print("message recieved");
-      print(event.notification!.body);
-      print(event.data.values);
-      showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            title: Text("Notification"),
-            content: Text(event.notification!.body!),
+  Future<void> _initializeMessaging() async {
+    // Request permissions (iOS only)
+    final settings = await messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+    print('Notification permissions: ${settings.authorizationStatus}');
+
+    // Get and store FCM token
+    _fcmToken = await messaging.getToken();
+    print('FCM Token: $_fcmToken');
+    
+    // Subscribe to topic
+    await messaging.subscribeToTopic("messaging");
+
+    // Handle foreground messages
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('Foreground message received');
+      setState(() {
+        _latestNotification = message.notification?.body ?? 'No body';
+      });
+
+      if (message.notification != null && context.mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(message.notification?.title ?? 'Notification'),
+            content: Text(message.notification?.body ?? ''),
             actions: [
               TextButton(
-                child: Text("Ok"),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
               )
             ],
-          );
-        },
-      );
+          ),
+        );
+      }
     });
 
-    FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      print('Message clicked!');
+    // Handle when app is opened from terminated state
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('App opened from notification');
+      setState(() {
+        _latestNotification = message.notification?.body ?? 'No body';
+      });
     });
   }
 
@@ -85,7 +108,35 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         title: Text(widget.title!),
       ),
-      body: Center(child: Text("Messaging Tutorial")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('FCM Messaging Demo', style: TextStyle(fontSize: 20)),
+            const SizedBox(height: 30),
+            if (_fcmToken != null) ...[
+              const Text('Your FCM Token:'),
+              const SizedBox(height: 10),
+              SelectableText(
+                _fcmToken!,
+                style: const TextStyle(fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 30),
+            ],
+            if (_latestNotification != null) ...[
+              const Text('Last Notification:'),
+              const SizedBox(height: 10),
+              Text(
+                _latestNotification!,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+            if (_fcmToken == null)
+              const CircularProgressIndicator(),
+          ],
+        ),
+      ),
     );
   }
 }
